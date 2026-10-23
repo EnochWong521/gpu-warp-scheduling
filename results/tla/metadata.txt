@@ -1,0 +1,19 @@
+Two-Level Active Scheduler Sweep
+
+Date: Thu Oct  1 21:17:10 EDT 2026
+Project root: /home/ewong/gpu-warp-scheduling
+
+Accel-Sim:
+  64653015f85fb5664c84a10f48527e8897d289d0
+
+GPGPU-Sim:
+  91880c53383d5a6a6742bfb1be2c5f34e39c7871
+
+GPU config:
+  /home/ewong/gpu-warp-scheduling/accel-sim-framework/gpu-simulator/gpgpu-sim/configs/tested-cfgs/SM7_QV100/gpgpusim.config
+
+Trace config:
+  /home/ewong/gpu-warp-scheduling/accel-sim-framework/gpu-simulator/configs/tested-cfgs/SM7_QV100/trace.config
+
+Trace set:
+  tesla-v100/rodinia_2.0-ft

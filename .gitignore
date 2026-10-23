@@ -50,3 +50,6 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+
+# Jupyter checkpoints
+.ipynb_checkpoints/

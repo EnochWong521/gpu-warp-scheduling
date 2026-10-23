@@ -1,0 +1,10 @@
+workload,scheduler,scheduler_config,status,cycles,instructions,ipc,wall_time,max_rss_kb
+backprop,tla4,two_level_active:4:0:1,FAIL,,,,0:00.56,512512
+backprop,tla8,two_level_active:8:0:1,FAIL,,,,0:00.43,512512
+backprop,tla16,two_level_active:16:0:1,FAIL,,,,0:00.44,512512
+nn,tla4,two_level_active:4:0:1,FAIL,,,,0:00.38,491136
+nn,tla8,two_level_active:8:0:1,FAIL,,,,0:00.41,491008
+nn,tla16,two_level_active:16:0:1,FAIL,,,,0:00.39,491136
+nw,tla4,two_level_active:4:0:1,FAIL,,,,0:00.40,487168
+nw,tla8,two_level_active:8:0:1,FAIL,,,,0:00.38,487296
+nw,tla16,two_level_active:16:0:1,FAIL,,,,0:00.35,487296
