@@ -1,0 +1,5 @@
+launch,cta,mode,address,ready,head,first_eligible,selected,before_head,head_latch_busy,eligible_unselected
+1,185,stock,0x7fb1257236e0,5661,6662,6662,6662,1001,0,0
+2,5,stock,0x7fb125700f60,5613,6218,6218,6218,605,0,0
+1,185,enabled,0x7fb1257236e0,5665,6661,6661,6661,996,0,0
+2,5,enabled,0x7fb125700f60,5716,6692,6692,6692,976,0,0

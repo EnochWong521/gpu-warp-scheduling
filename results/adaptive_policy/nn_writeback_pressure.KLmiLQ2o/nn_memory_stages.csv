@@ -1,0 +1,5 @@
+launch,cta,pc,mode,issue,entry,requests,first_admit,last_admit,gating_request,gating_address,gating_admit,cache_outcomes,gating_response,last_response,gating_writeback_pick,clear
+1,185,0xf0,stock,5505,5520,16,5521,5524,135460,0x7fb1257236e0,5524,L1D_025:HIT_RESERVED/merge@5544,5661,5661,6662,6663
+2,5,0xb0,stock,5229,5279,16,5280,5284,565899,0x7fb125700f60,5284,L1D_063:MISS/forward@5304 L2_bank_051:HIT/hit@5610,5613,5613,6218,6219
+1,185,0xf0,enabled,5384,5448,16,5449,5452,113746,0x7fb1257236e0,5452,L1D_025:HIT_RESERVED/merge@5472,5665,5665,6661,6662
+2,5,0xb0,enabled,5336,5360,16,5361,5365,565733,0x7fb125700f60,5365,L1D_063:MISS/forward@5419 L2_bank_051:HIT/hit@5713,5716,5716,6692,6693
