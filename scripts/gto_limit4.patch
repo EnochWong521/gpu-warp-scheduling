@@ -1,0 +1,109 @@
+diff --git a/src/gpgpu-sim/shader.h b/src/gpgpu-sim/shader.h
+--- a/src/gpgpu-sim/shader.h
++++ b/src/gpgpu-sim/shader.h
+@@ -907,15 +907,29 @@
+                 register_set *dp_out, register_set *sfu_out,
+                 register_set *int_out, register_set *tensor_core_out,
+                 std::vector<register_set *> &spec_cores_out,
+-                register_set *mem_out, int id)
++                register_set *mem_out, int id,
++                bool limit_greedy_priority = false)
+       : scheduler_unit(stats, shader, scoreboard, simt, warp, sp_out, dp_out,
+                        sfu_out, int_out, tensor_core_out, spec_cores_out,
+-                       mem_out, id) {}
++                       mem_out, id),
++        m_limit_greedy_priority(limit_greedy_priority) {}
+   virtual ~gto_scheduler() {}
+   virtual void order_warps();
+   virtual void done_adding_supervised_warps() {
+     m_last_supervised_issued = m_supervised_warps.begin();
+   }
++
++ protected:
++  void do_on_warp_issued(
++      unsigned warp_id, unsigned num_issued,
++      const std::vector<shd_warp_t *>::const_iterator &prioritized_iter) override;
++
++ private:
++  static constexpr unsigned GREEDY_ISSUE_LIMIT = 4;
++  bool m_limit_greedy_priority;
++  bool m_greedy_limit_active = false;
++  unsigned m_last_issued_dynamic_id = 0;
++  unsigned m_issue_streak = 0;
+ };
+ 
+ class oldest_scheduler : public scheduler_unit {
+@@ -2428,6 +2442,8 @@
+   unsigned long long gpgpu_n_stall_shd_mem;
+   unsigned *single_issue_nums;
+   unsigned *dual_issue_nums;
++  unsigned long long gto_limit_active_cycles;
++  unsigned long long gto_limit_other_warp_cycles;
+ 
+   unsigned ctas_completed;
+   // memory access classification
+diff --git a/src/gpgpu-sim/shader.cc b/src/gpgpu-sim/shader.cc
+--- a/src/gpgpu-sim/shader.cc
++++ b/src/gpgpu-sim/shader.cc
+@@ -228,7 +228,8 @@
+             &m_pipeline_reg[ID_OC_SP], &m_pipeline_reg[ID_OC_DP],
+             &m_pipeline_reg[ID_OC_SFU], &m_pipeline_reg[ID_OC_INT],
+             &m_pipeline_reg[ID_OC_TENSOR_CORE], m_specilized_dispatch_reg,
+-            &m_pipeline_reg[ID_OC_MEM], i));
++            &m_pipeline_reg[ID_OC_MEM], i,
++            sched_config == "gto_limit4"));
+         break;
+       case CONCRETE_SCHEDULER_RRR:
+         schedulers.push_back(new rrr_scheduler(
+@@ -752,6 +753,13 @@
+     fprintf(fout, "WS%d:%d\t", i, dual_issue_nums[i]);
+   fprintf(fout, "\n");
+ 
++  if (std::string(m_config->gpgpu_scheduler_string) == "gto_limit4") {
++    fprintf(fout, "gto_greedy_issue_limit = 4\n");
++    fprintf(fout, "gto_limit_active_cycles = %llu\n", gto_limit_active_cycles);
++    fprintf(fout, "gto_limit_other_warp_cycles = %llu\n",
++            gto_limit_other_warp_cycles);
++  }
++
+   m_outgoing_traffic_stats->print(fout);
+   m_incoming_traffic_stats->print(fout);
+ }
+@@ -1825,10 +1833,36 @@
+ }
+ 
+ void gto_scheduler::order_warps() {
++  m_greedy_limit_active =
++      m_limit_greedy_priority && m_issue_streak == GREEDY_ISSUE_LIMIT &&
++      m_last_supervised_issued != m_supervised_warps.end() &&
++      !(*m_last_supervised_issued)->done_exit() &&
++      (*m_last_supervised_issued)->get_dynamic_warp_id() ==
++          m_last_issued_dynamic_id;
++  if (m_greedy_limit_active) ++m_stats->gto_limit_active_cycles;
++
+   order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
+                     m_last_supervised_issued, m_supervised_warps.size(),
+-                    ORDERING_GREEDY_THEN_PRIORITY_FUNC,
++                    m_greedy_limit_active ? ORDERED_PRIORITY_FUNC_ONLY
++                                          : ORDERING_GREEDY_THEN_PRIORITY_FUNC,
+                     scheduler_unit::sort_warps_by_oldest_dynamic_id);
++}
++
++void gto_scheduler::do_on_warp_issued(
++    unsigned warp_id, unsigned num_issued,
++    const std::vector<shd_warp_t *>::const_iterator &prioritized_iter) {
++  scheduler_unit::do_on_warp_issued(warp_id, num_issued, prioritized_iter);
++  if (!m_limit_greedy_priority || num_issued != 1) return;
++
++  // Count each successful scheduler cycle once, even with dual issue.
++  const unsigned dynamic_id = warp(warp_id).get_dynamic_warp_id();
++  if (m_issue_streak != 0 && dynamic_id == m_last_issued_dynamic_id) {
++    if (m_issue_streak < GREEDY_ISSUE_LIMIT) ++m_issue_streak;
++  } else {
++    if (m_greedy_limit_active) ++m_stats->gto_limit_other_warp_cycles;
++    m_last_issued_dynamic_id = dynamic_id;
++    m_issue_streak = 1;
++  }
+ }
+ 
+ void oldest_scheduler::order_warps() {

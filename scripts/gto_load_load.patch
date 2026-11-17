@@ -1,0 +1,123 @@
+--- a/src/gpgpu-sim/gpu-sim.cc
++++ b/src/gpgpu-sim/gpu-sim.cc
+@@ -657,6 +657,9 @@
+       opp, "-gpgpu_num_mem_units", OPT_UINT32, &gpgpu_num_mem_units,
+       "Number if ldst units (default=1) WARNING: not hooked up to anything",
+       "1");
++  option_parser_register(opp, "-gpgpu_gto_load_load", OPT_BOOL,
++                         &gto_load_load,
++                         "Promote the oldest eligible load over a greedy repeat load", "0");
+   option_parser_register(opp, "-gpgpu_gto_bypass_probe", OPT_BOOL,
+                          &gto_bypass_probe,
+                          "Observe older issue alternatives under stock GTO", "0");
+--- a/src/gpgpu-sim/shader.cc
++++ b/src/gpgpu-sim/shader.cc
+@@ -191,6 +191,10 @@
+   // scedulers
+   // must currently occur after all inputs have been initialized.
+   std::string sched_config = m_config->gpgpu_scheduler_string;
++  if (m_config->gto_load_load && (sched_config != "gto" || m_config->gto_bypass_probe)) {
++    fprintf(stderr, "Load/load override requires GTO with the stock probe off.\n");
++    abort();
++  }
+   if (m_config->gto_bypass_probe && sched_config != "gto") {
+     fprintf(stderr, "The GTO bypass probe requires stock gto.\n");
+     abort();
+@@ -757,6 +761,10 @@
+     fprintf(fout, "WS%d:%d\t", i, dual_issue_nums[i]);
+   fprintf(fout, "\n");
+ 
++  if (std::string(m_config->gpgpu_scheduler_string) == "gto") {
++    fprintf(fout, "gto_load_load_enabled = %u\n", unsigned(m_config->gto_load_load));
++    fprintf(fout, "gto_load_load_overrides = %llu\n", load_load_overrides);
++  }
+   if (m_config->gto_bypass_probe) {
+     fprintf(fout, "gto_probe_pairs =");
+     for (const auto &bin : probe_pairs)
+@@ -1629,6 +1637,39 @@
+   probe_previous = id;
+ }
+ 
++// GTO puts the last-issued slot first. Require the same dynamic warp and
++// a dispatchable first instruction before changing this cycle's ordering.
++shd_warp_t *scheduler_unit::promote_older_load() {
++  auto &order = m_next_cycle_prioritized_warps;
++  if (!probe_has_previous || order.empty()) return nullptr;
++  auto *greedy = order.front();
++  if (!greedy || greedy->done_exit() ||
++      greedy->get_dynamic_warp_id() != probe_previous ||
++      probe_next(*greedy) != shd_warp_t::probe_state::eligible ||
++      strcmp(pair_class(*greedy->ibuffer_next_inst()), "load") != 0)
++    return nullptr;
++
++  auto oldest = order.end();
++  unsigned age_bound = probe_previous;
++  unsigned unknown_bound = probe_previous;
++  for (auto it = order.begin() + 1; it != order.end(); ++it) {
++    auto *w = *it;
++    if (!w || w->done_exit() || w->get_dynamic_warp_id() >= age_bound) continue;
++    auto state = probe_next(*w);
++    if (state == shd_warp_t::probe_state::unknown)
++      unknown_bound = std::min(unknown_bound, w->get_dynamic_warp_id());
++    if (state == shd_warp_t::probe_state::eligible) {
++      oldest = it;
++      age_bound = w->get_dynamic_warp_id();
++    }
++  }
++  if (oldest == order.end() || unknown_bound < age_bound ||
++      strcmp(pair_class(*(*oldest)->ibuffer_next_inst()), "load") != 0)
++    return nullptr;
++  std::rotate(order.begin(), oldest, oldest + 1);
++  return order.front();
++}
++
+ void scheduler_unit::cycle() {
+   SCHED_DPRINTF("scheduler_unit::cycle()\n");
+   bool valid_inst =
+@@ -1639,6 +1680,8 @@
+   bool issued_inst = false;  // of these we issued one
+ 
+   order_warps();
++  const bool load_load = m_shader->m_config->gto_load_load;
++  const shd_warp_t *promoted = load_load ? promote_older_load() : nullptr;
+   for (std::vector<shd_warp_t *>::const_iterator iter =
+            m_next_cycle_prioritized_warps.begin();
+        iter != m_next_cycle_prioritized_warps.end(); iter++) {
+@@ -1738,6 +1781,11 @@
+               if (m_shader->m_config->gto_bypass_probe && issued == 0)
+                 observe_first_issue(warp(warp_id), *pI);
+               m_shader->issue_warp(*port, pI, active_mask, warp_id, m_id);
++              if (load_load && issued == 0) {
++                if (promoted == *iter) ++m_stats->load_load_overrides;
++                probe_previous = (*iter)->get_dynamic_warp_id();
++                probe_has_previous = true;
++              }
+               issued++;
+               issued_inst = true;
+               warp_inst_issued = true;
+--- a/src/gpgpu-sim/shader.h
++++ b/src/gpgpu-sim/shader.h
+@@ -834,6 +834,7 @@
+   register_set *issue_port(op_type op, exec_unit_type_t previous,
+                            exec_unit_type_t &unit) const;
+   shd_warp_t::probe_state probe_next(shd_warp_t &candidate) const;
++  shd_warp_t *promote_older_load();
+   void observe_first_issue(shd_warp_t &chosen, const warp_inst_t &inst);
+   bool probe_has_previous = false;
+   unsigned probe_previous = 0;
+@@ -2275,6 +2276,7 @@
+   unsigned max_barriers_per_cta;
+   char *gpgpu_scheduler_string;
+   bool gto_bypass_probe;
++  bool gto_load_load;
+   unsigned gpgpu_shmem_per_block;
+   unsigned gpgpu_registers_per_block;
+   char *pipeline_widths_string;
+@@ -2488,6 +2490,7 @@
+ class shader_core_stats : public shader_core_stats_pod {
+  public:
+   std::map<std::pair<std::string, std::string>, unsigned long long> probe_pairs;
++  unsigned long long load_load_overrides = 0;
+   unsigned long long probe_repeats = 0, probe_bypasses = 0;
+   unsigned long long probe_unknown_cycles = 0, probe_opportunities = 0;
+   std::map<unsigned, unsigned long long> probe_wait_histogram;

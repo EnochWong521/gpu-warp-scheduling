@@ -1,0 +1,89 @@
+--- a/src/gpgpu-sim/shader.cc
++++ b/src/gpgpu-sim/shader.cc
+@@ -758,6 +758,11 @@
+   fprintf(fout, "\n");
+ 
+   if (m_config->gto_bypass_probe) {
++    fprintf(fout, "gto_probe_pairs =");
++    for (const auto &bin : probe_pairs)
++      fprintf(fout, " %s/%s:%llu", bin.first.first.c_str(),
++              bin.first.second.c_str(), bin.second);
++    fprintf(fout, "\n");
+     fprintf(fout, "gto_probe_repeats = %llu\n", probe_repeats);
+     fprintf(fout, "gto_probe_bypasses = %llu\n", probe_bypasses);
+     fprintf(fout, "gto_probe_unknown_cycles = %llu\n", probe_unknown_cycles);
+@@ -1559,6 +1564,35 @@
+   return state::eligible;
+ }
+ 
++// Use decoded operation classes. Generic ALU on Volta includes moves, NOP
++// and synchronization, so it is not sufficient evidence of arithmetic.
++static const char *pair_class(const warp_inst_t &inst) {
++  if (inst.isatomic()) return "other";
++  if (inst.is_load()) return "load";
++  if (inst.is_store()) return "store";
++  switch (inst.op) {
++    case SP_OP:
++    case DP_OP:
++    case INTP_OP:
++    case SFU_OP:
++    case ALU_SFU_OP:
++    case TENSOR_CORE_OP:
++    case SPECIALIZED_UNIT_3_OP:  // SM7_QV100 tensor operations
++      return "arithmetic";
++    case ALU_OP:
++    case BRANCH_OP:
++    case BARRIER_OP:
++    case MEMORY_BARRIER_OP:
++    case CALL_OPS:
++    case RET_OPS:
++    case EXIT_OPS:
++    case SPECIALIZED_UNIT_1_OP:  // SM7_QV100 branch unit
++      return "other";
++    default:
++      return "unclassified";
++  }
++}
++
+ void scheduler_unit::observe_first_issue(shd_warp_t &chosen,
+                                          const warp_inst_t &inst) {
+   unsigned id = chosen.get_dynamic_warp_id();
+@@ -1571,21 +1605,25 @@
+     ++m_stats->probe_repeats;
+     // TRYWAIT and CDP can change state before the issue call.
+     bool unknown = inst.m_is_cdp || inst.is_syncs_try_wait();
+-    bool bypassed = false;
++    shd_warp_t *oldest = nullptr;
+     if (!unknown) {
+       for (auto *w : m_supervised_warps) {
+         if (!w || w->done_exit() || w->get_dynamic_warp_id() >= id) continue;
+         auto result = probe_next(*w);
+         if (result == shd_warp_t::probe_state::unknown) unknown = true;
+         if (result == shd_warp_t::probe_state::eligible) {
+-          bypassed = true;
++          if (!oldest || w->get_dynamic_warp_id() < oldest->get_dynamic_warp_id())
++            oldest = w;
+           ++probe_pending[w->get_dynamic_warp_id()];
+           ++m_stats->probe_opportunities;
+         }
+       }
+     }
+     if (unknown) ++m_stats->probe_unknown_cycles;
+-    if (bypassed) ++m_stats->probe_bypasses;
++    if (oldest) {
++      ++m_stats->probe_bypasses;
++      ++m_stats->probe_pairs[{pair_class(inst), pair_class(*oldest->ibuffer_next_inst())}];
++    }
+   }
+   probe_has_previous = true;
+   probe_previous = id;
+--- a/src/gpgpu-sim/shader.h
++++ b/src/gpgpu-sim/shader.h
+@@ -2487,6 +2487,7 @@
+ 
+ class shader_core_stats : public shader_core_stats_pod {
+  public:
++  std::map<std::pair<std::string, std::string>, unsigned long long> probe_pairs;
+   unsigned long long probe_repeats = 0, probe_bypasses = 0;
+   unsigned long long probe_unknown_cycles = 0, probe_opportunities = 0;
+   std::map<unsigned, unsigned long long> probe_wait_histogram;

@@ -50,6 +50,12 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+/.codex/
+/RTK.md
+/AGENTS.md
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
+
+# Windows download metadata files that appear in WSL
+*:Zone.Identifier
